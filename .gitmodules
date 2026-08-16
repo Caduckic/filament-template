@@ -1,0 +1,3 @@
+[submodule "external/filament"]
+	path = external/filament
+	url = https://github.com/google/filament.git

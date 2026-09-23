@@ -1,3 +1,6 @@
 [submodule "external/filament"]
 	path = external/filament
 	url = https://github.com/google/filament.git
+[submodule "external/SDL"]
+	path = external/SDL
+	url = https://github.com/libsdl-org/SDL.git

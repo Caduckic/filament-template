@@ -1,12 +1,7 @@
 #include "platform.h"
 
-#include <SDL.h>
-
-#if defined(MY_PLATFORM_LINUX)
-#include <SDL_syswm.h>
-#endif
-
 #include <cstdio>
+#include <GLES3/gl3.h>
 
 Platform::~Platform() {
     shutdown();
@@ -14,7 +9,7 @@ Platform::~Platform() {
 
 bool Platform::initialize() {
 
-    if (SDL_Init(SDL_INIT_VIDEO) != 0) {
+    if (!SDL_Init(SDL_INIT_VIDEO)) {
 
         std::fprintf(
             stderr,
@@ -46,7 +41,6 @@ bool Platform::initialize() {
 #endif
 
     Uint32 windowFlags =
-        SDL_WINDOW_SHOWN |
         SDL_WINDOW_RESIZABLE;
 
 #if defined(MY_PLATFORM_WEB)
@@ -57,8 +51,6 @@ bool Platform::initialize() {
 
     m_window = SDL_CreateWindow(
         "My Filament App",
-        SDL_WINDOWPOS_CENTERED,
-        SDL_WINDOWPOS_CENTERED,
         1280,
         720,
         windowFlags
@@ -97,57 +89,112 @@ bool Platform::initialize() {
         return false;
     }
 
-    if (SDL_GL_MakeCurrent(m_window, m_glContext) != 0) {
-
-        std::fprintf(
-            stderr,
-            "SDL_GL_MakeCurrent failed: %s\n",
-            SDL_GetError()
-        );
-
-        SDL_GL_DeleteContext(m_glContext);
-        m_glContext = nullptr;
-
-        SDL_DestroyWindow(m_window);
-        m_window = nullptr;
-
-        SDL_Quit();
-
-        return false;
-    }
-
     std::printf(
         "WebGL context created successfully.\n"
     );
 
 #else
-
-    SDL_SysWMinfo windowInfo;
-
-    SDL_VERSION(&windowInfo.version);
-
-    if (!SDL_GetWindowWMInfo(m_window, &windowInfo)) {
-
+    SDL_PropertiesID properties = SDL_GetWindowProperties(m_window);
+    if (!properties) {
         std::fprintf(
             stderr,
-            "SDL_GetWindowWMInfo failed: %s\n",
+            "SDL_GetWindowProperties failed: %s\n",
             SDL_GetError()
         );
-
         SDL_DestroyWindow(m_window);
         m_window = nullptr;
 
         SDL_Quit();
-
+        
         return false;
     }
 
 #if defined(MY_PLATFORM_LINUX)
 
-    m_nativeWindow =
-        reinterpret_cast<void*>(
-            windowInfo.info.x11.window
+    const char* driver = SDL_GetCurrentVideoDriver();
+
+    if (driver && SDL_strcmp(driver, "x11") == 0) {
+        auto x11Window = SDL_GetNumberProperty(
+            properties,
+            SDL_PROP_WINDOW_X11_WINDOW_NUMBER,
+            0
         );
+        if (x11Window == 0) {
+            std::fprintf(
+                stderr,
+                "Failed to get X11 window handle: %s\n",
+                SDL_GetError()
+            );
+
+            SDL_DestroyWindow(m_window);
+            m_window = nullptr;
+
+            SDL_Quit();
+
+            return false;
+        }
+
+        m_nativeWindowType = NativeWindowType::X11;
+        m_nativeWindow =
+            reinterpret_cast<void*>(
+                static_cast<uintptr_t>(x11Window)
+            );
+    }
+    else if (driver && SDL_strcmp(driver, "wayland") == 0) {
+        auto waylandDisplay = SDL_GetPointerProperty(
+            properties,
+            SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER,
+            nullptr
+        );
+
+        auto waylandSurface = SDL_GetPointerProperty(
+            properties,
+            SDL_PROP_WINDOW_WAYLAND_SURFACE_POINTER,
+            nullptr
+        );
+
+        if (!waylandDisplay || !waylandSurface) {
+            std::fprintf(
+                stderr,
+                "Failed to get Wayland display/surface: %s\n",
+                SDL_GetError()
+            );
+
+            SDL_DestroyWindow(m_window);
+            m_window = nullptr;
+
+            SDL_Quit();
+
+            return false;
+        }
+
+        int width = 0;
+        int height = 0;
+
+        SDL_GetWindowSizeInPixels(
+            m_window,
+            &width,
+            &height
+        );
+
+        m_waylandWindow.display =
+            static_cast<wl_display*>(waylandDisplay);
+
+        m_waylandWindow.surface =
+            static_cast<wl_surface*>(waylandSurface);
+
+        m_waylandWindow.width =
+            static_cast<uint32_t>(width);
+
+        m_waylandWindow.height =
+            static_cast<uint32_t>(height);
+
+        m_nativeWindowType =
+            NativeWindowType::Wayland;
+
+        m_nativeWindow =
+            &m_waylandWindow;
+    }
 
 #endif
 
@@ -166,47 +213,13 @@ void* Platform::getNativeWindow() const {
     return m_nativeWindow;
 }
 
-bool Platform::processEvents() {
-
-    SDL_Event event;
-
-    while (SDL_PollEvent(&event)) {
-
-        switch (event.type) {
-
-            case SDL_QUIT:
-
-                std::printf("SDL_QUIT received.\n");
-
-                m_running = false;
-                break;
-
-            case SDL_KEYDOWN:
-
-                if (event.key.keysym.sym == SDLK_ESCAPE) {
-
-                    std::printf("Escape pressed.\n");
-
-                    m_running = false;
-                }
-
-                break;
-
-            default:
-                break;
-        }
-    }
-
-    return m_running;
-}
-
 void Platform::shutdown() {
 
 #if defined(MY_PLATFORM_WEB)
 
     if (m_glContext) {
 
-        SDL_GL_DeleteContext(m_glContext);
+        SDL_GL_DestroyContext(m_glContext);
 
         m_glContext = nullptr;
     }

@@ -2,11 +2,17 @@
     "configurations": [
         {
             "name": "Linux",
-            "compileCommands": "${workspaceFolder}/build/linux/compile_commands.json",
+            "compileCommands": [
+                "${workspaceFolder}/build/linux/compile_commands.json"
+            ],
             "compilerPath": "/usr/bin/clang++",
             "cStandard": "c17",
             "cppStandard": "c++20",
-            "intelliSenseMode": "linux-clang-x64"
+            "intelliSenseMode": "linux-clang-x64",
+            "includePath": [
+                "${default}",
+                "${workspaceFolder}/external/filament/libs/gltfio/include"
+            ]
         }
     ],
     "version": 4

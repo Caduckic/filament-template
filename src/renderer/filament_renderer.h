@@ -18,9 +18,10 @@
 
 #include <utils/Entity.h>
 
-#include <chrono>
+#include <vector>
 
 #include "model_loader.h"
+#include "model_asset.h"
 
 class FilamentRenderer {
 public:
@@ -31,9 +32,20 @@ public:
 
     void createLighting();
 
-    void renderFrame();
+    void renderFrame(const uint32_t x, const uint32_t y);
 
     void shutdown();
+
+    filament::math::float3 getCameraPos();
+    filament::math::float3 getCameraTarget();
+    filament::math::float3 getCameraUp();
+    filament::math::float3 getCameraLeft();
+
+    void setCameraPos(filament::math::float3 pos);
+    void setCameraTarget(filament::math::float3 tar);
+    void setCameraUp(filament::math::float3 up);
+
+    ModelAsset loadModel(const char* path);
 
 private:
     filament::Engine* m_engine = nullptr;
@@ -44,31 +56,16 @@ private:
 
     filament::Camera* m_camera = nullptr;
     utils::Entity m_cameraEntity;
+    filament::math::float3 m_cameraTarget;
 
     bool m_cameraCreated = false;
 
-    struct Vertex {
-        filament::math::float3 position;
-        filament::math::float4 color;
-    };
-
-    filament::VertexBuffer* m_vertexBuffer = nullptr;
-    filament::IndexBuffer* m_indexBuffer = nullptr;
-
-    filament::Material* m_material = nullptr;
-    filament::MaterialInstance* m_materialInstance = nullptr;
-
-    utils::Entity m_triangleEntity{};
-
-    float m_rotation = 0.0f;
-
-    std::chrono::steady_clock::time_point m_lastFrame;
-
     ModelLoader m_modelLoader;
 
-    filament::gltfio::FilamentAsset* m_model = nullptr;
+    std::vector<filament::gltfio::FilamentAsset*> m_models;
 
-    utils::Entity m_lightEntity;
-    utils::Entity m_fillLight;
-    filament::IndirectLight* m_indirectLight = nullptr;
+    utils::Entity m_dirLightEntity;
+    filament::IndirectLight* m_ambLight = nullptr;
+
+    filament::math::int2 m_lastScreenSize;
 };

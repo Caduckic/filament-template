@@ -5,6 +5,22 @@
 #include <fstream>
 #include <vector>
 
+ModelAsset FilamentRenderer::loadModel(const char* path) {
+    filament::gltfio::FilamentAsset* m_model = m_modelLoader.load(
+        "assets/models/Insert Cabinet.glb",
+        m_scene
+    );
+
+    std::printf("INIT: model = %p\n", (void*)m_model);
+
+    if (!m_model) {
+        shutdown();
+    }
+
+    m_models.emplace_back(m_model);
+    return {m_model, m_engine, m_scene};
+}
+
 static std::vector<uint8_t> readFile(const char* path) {
 
     std::ifstream file(
@@ -42,7 +58,7 @@ void FilamentRenderer::createLighting() {
 
     auto& em = m_engine->getEntityManager();
 
-    m_lightEntity = em.create();
+    m_dirLightEntity = em.create();
 
     filament::LightManager::Builder(
         filament::LightManager::Type::DIRECTIONAL
@@ -53,23 +69,11 @@ void FilamentRenderer::createLighting() {
         .castShadows(true)
         .build(
             *m_engine,
-            m_lightEntity
+            m_dirLightEntity
         );
 
-    m_scene->addEntity(m_lightEntity);
+    m_scene->addEntity(m_dirLightEntity);
 
-    // m_fillLight = em.create();
-
-    // filament::LightManager::Builder(
-    //     filament::LightManager::Type::DIRECTIONAL
-    // )
-    //     .color({0.7f, 0.8f, 1.0f})
-    //     .intensity(20000.0f)
-    //     .direction({0.5f, -0.5f, 0.5f})
-    //     .castShadows(false)
-    //     .build(*m_engine, m_fillLight);
-
-    // m_scene->addEntity(m_fillLight);
     constexpr float ambient = 0.25f;
 
     // 9 spherical-harmonic coefficients, each with RGB.
@@ -86,18 +90,18 @@ void FilamentRenderer::createLighting() {
         filament::math::float3{0.0f}
     };
 
-    m_indirectLight =
+    m_ambLight =
         filament::IndirectLight::Builder()
             .irradiance(3, sh)
             .intensity(30000.0f)
             .build(*m_engine);
 
-    if (!m_indirectLight) {
+    if (!m_ambLight) {
         shutdown();
         // return false;
     }
 
-    m_scene->setIndirectLight(m_indirectLight);
+    m_scene->setIndirectLight(m_ambLight);
 }
 
 FilamentRenderer::FilamentRenderer()
@@ -109,12 +113,8 @@ FilamentRenderer::FilamentRenderer()
       m_camera(nullptr),
       m_cameraEntity{},
       m_cameraCreated(false),
-      m_triangleEntity{},
-      m_vertexBuffer(nullptr),
-      m_indexBuffer(nullptr),
-      m_material(nullptr),
-      m_materialInstance(nullptr),
-      m_model(nullptr) {
+      m_models{},
+      m_lastScreenSize(filament::math::int2{1280, 720}) {
 }
 
 FilamentRenderer::~FilamentRenderer() {
@@ -122,7 +122,6 @@ FilamentRenderer::~FilamentRenderer() {
 }
 
 bool FilamentRenderer::initialize(void* nativeWindow) {
-    m_lastFrame = std::chrono::steady_clock::now();
 
     // -----------------------------------------------------
     // Engine
@@ -140,7 +139,6 @@ bool FilamentRenderer::initialize(void* nativeWindow) {
 
 #if defined(MY_PLATFORM_WEB)
     m_swapChain = m_engine->createSwapChain(nullptr);
-    // m_swapChain = m_engine->createSwapChain(1280, 720);
 
 #else
 
@@ -171,32 +169,6 @@ bool FilamentRenderer::initialize(void* nativeWindow) {
         return false;
     }
 
-    m_model = m_modelLoader.load(
-        "assets/models/Insert Cabinet.glb",
-        m_scene
-    );
-
-    std::printf("INIT: model = %p\n", (void*)m_model);
-
-    if (!m_model) {
-        shutdown();
-        return false;
-    }
-
-    auto& tm = m_engine->getTransformManager();
-
-    auto root = m_model->getRoot();
-    auto rootInstance = tm.getInstance(root);
-
-    if (rootInstance.isValid()) {
-        tm.setTransform(
-            rootInstance,
-            filament::math::mat4f::translation(
-                filament::math::float3{0.0f, -1.0f, 0.0f}
-            )
-        );
-    }
-
     // -----------------------------------------------------
     // Camera entity
     // -----------------------------------------------------
@@ -220,7 +192,7 @@ bool FilamentRenderer::initialize(void* nativeWindow) {
     const double near = 0.1;
     const double far = 100.0;
 
-    const double aspect = 1280.0 / 720.0;
+    const double aspect = (double)m_lastScreenSize.x / (double)m_lastScreenSize.y;
     const double fovY = filament::math::F_PI / 4.0;
 
     const double top = near * std::tan(fovY / 2.0);
@@ -236,9 +208,11 @@ bool FilamentRenderer::initialize(void* nativeWindow) {
         far
     );
 
+    m_cameraTarget = filament::math::double3{0.0, -0.5, -0.5};
+
     m_camera->lookAt(
-        filament::math::double3{0.0, 0.0, 3.0},
-        filament::math::double3{0.0, 0.0, 0.0},
+        filament::math::double3{0.0, 2.0, 3.5},
+        m_cameraTarget,
         filament::math::double3{0.0, 1.0, 0.0}
     );
 
@@ -263,263 +237,77 @@ bool FilamentRenderer::initialize(void* nativeWindow) {
     clearOptions.clearColor = { 0.1f, 0.2f, 0.4f, 1.0f };
 
     m_renderer->setClearOptions(clearOptions);
-    
-    // -----------------------------------------------------
-    // Cube geometry
-    // -----------------------------------------------------
-
-    static const Vertex vertices[] = {
-
-        // Front (+Z) — RED
-        {{-1.0f, -1.0f,  1.0f}, {1, 0, 0, 1}},
-        {{ 1.0f, -1.0f,  1.0f}, {1, 0, 0, 1}},
-        {{ 1.0f,  1.0f,  1.0f}, {1, 0, 0, 1}},
-        {{-1.0f,  1.0f,  1.0f}, {1, 0, 0, 1}},
-
-        // Back (-Z) — GREEN
-        {{ 1.0f, -1.0f, -1.0f}, {0, 1, 0, 1}},
-        {{-1.0f, -1.0f, -1.0f}, {0, 1, 0, 1}},
-        {{-1.0f,  1.0f, -1.0f}, {0, 1, 0, 1}},
-        {{ 1.0f,  1.0f, -1.0f}, {0, 1, 0, 1}},
-
-        // Left (-X) — BLUE
-        {{-1.0f, -1.0f, -1.0f}, {0, 0, 1, 1}},
-        {{-1.0f, -1.0f,  1.0f}, {0, 0, 1, 1}},
-        {{-1.0f,  1.0f,  1.0f}, {0, 0, 1, 1}},
-        {{-1.0f,  1.0f, -1.0f}, {0, 0, 1, 1}},
-
-        // Right (+X) — YELLOW
-        {{ 1.0f, -1.0f,  1.0f}, {1, 1, 0, 1}},
-        {{ 1.0f, -1.0f, -1.0f}, {1, 1, 0, 1}},
-        {{ 1.0f,  1.0f, -1.0f}, {1, 1, 0, 1}},
-        {{ 1.0f,  1.0f,  1.0f}, {1, 1, 0, 1}},
-
-        // Top (+Y) — MAGENTA
-        {{-1.0f,  1.0f,  1.0f}, {1, 0, 1, 1}},
-        {{ 1.0f,  1.0f,  1.0f}, {1, 0, 1, 1}},
-        {{ 1.0f,  1.0f, -1.0f}, {1, 0, 1, 1}},
-        {{-1.0f,  1.0f, -1.0f}, {1, 0, 1, 1}},
-
-        // Bottom (-Y) — CYAN
-        {{-1.0f, -1.0f, -1.0f}, {0, 1, 1, 1}},
-        {{ 1.0f, -1.0f, -1.0f}, {0, 1, 1, 1}},
-        {{ 1.0f, -1.0f,  1.0f}, {0, 1, 1, 1}},
-        {{-1.0f, -1.0f,  1.0f}, {0, 1, 1, 1}},
-    };
-
-    static const uint16_t indices[] = {
-
-        // Front
-        0, 1, 2,
-        0, 2, 3,
-
-        // Back
-        4, 5, 6,
-        4, 6, 7,
-
-        // Left
-        8, 9, 10,
-        8, 10, 11,
-
-        // Right
-        12, 13, 14,
-        12, 14, 15,
-
-        // Top
-        16, 17, 18,
-        16, 18, 19,
-
-        // Bottom
-        20, 21, 22,
-        20, 22, 23
-    };
-
-    m_vertexBuffer =
-        filament::VertexBuffer::Builder()
-            .vertexCount(24)
-            .bufferCount(1)
-            .attribute(
-                filament::VertexAttribute::POSITION,
-                0,
-                filament::VertexBuffer::AttributeType::FLOAT3,
-                offsetof(Vertex, position),
-                sizeof(Vertex)
-            )
-            .attribute(
-                filament::VertexAttribute::COLOR,
-                0,
-                filament::VertexBuffer::AttributeType::FLOAT3,
-                offsetof(Vertex, color),
-                sizeof(Vertex)
-            )
-            .build(*m_engine);
-
-    if (!m_vertexBuffer) {
-        shutdown();
-        return false;
-    }
-    
-    m_vertexBuffer->setBufferAt(
-        *m_engine,
-        0,
-        filament::VertexBuffer::BufferDescriptor(
-            vertices,
-            sizeof(vertices)
-        )
-    );
-
-    m_indexBuffer =
-        filament::IndexBuffer::Builder()
-            .indexCount(36)
-            .bufferType(filament::IndexBuffer::IndexType::USHORT)
-            .build(*m_engine);
-    
-    if (!m_indexBuffer) {
-        shutdown();
-        return false;
-    }
-
-    m_indexBuffer->setBuffer(
-        *m_engine,
-        filament::IndexBuffer::BufferDescriptor(
-            indices,
-            sizeof(indices)
-        )
-    );
-
-#if defined(MY_PLATFORM_WEB)
-    const char* materialPath =
-        "/assets/materials/triangle.filamat";
-#else
-    const char* materialPath =
-        "build/linux/assets/materials/triangle.filamat";
-#endif
-
-    std::printf(
-        "Loading material: %s\n",
-        materialPath
-    );
-
-    const auto materialData = readFile(materialPath);
-
-    std::printf(
-        "Material size: %zu bytes\n",
-        materialData.size()
-    );
-
-    if (materialData.empty()) {
-        std::fprintf(
-            stderr,
-            "FAILED TO LOAD MATERIAL\n"
-        );
-
-        shutdown();
-        return false;
-    }
-
-    m_material =
-        filament::Material::Builder()
-            .package(
-                materialData.data(),
-                materialData.size()
-            )
-            .build(*m_engine);
-
-    if (!m_material) {
-        shutdown();
-        return false;
-    }
-
-    m_materialInstance =
-        m_material->createInstance();
-
-    if (!m_materialInstance) {
-        shutdown();
-        return false;
-    }
-
-    m_triangleEntity =
-        m_engine->getEntityManager().create();
-
-    const filament::Box cubeBox{
-        { -0.5f, -0.5f, -0.5f },
-        {  0.5f,  0.5f,  0.5f }
-    };
-
-    auto result =
-        filament::RenderableManager::Builder(1)
-            .boundingBox(cubeBox)
-            .culling(false)
-            .castShadows(false)
-            .receiveShadows(false)
-            .geometry(
-                0,
-                filament::RenderableManager::PrimitiveType::TRIANGLES,
-                m_vertexBuffer,
-                m_indexBuffer
-            )
-            .material(
-                0,
-                m_materialInstance
-            )
-            .build(
-                *m_engine,
-                m_triangleEntity
-            );
-    
-    if (result != filament::RenderableManager::Builder::Result::Success) {
-        fprintf(stderr, "Failed to build triangle renderable: %d\n",
-                static_cast<int>(result));
-
-        m_engine->getEntityManager().destroy(m_triangleEntity);
-        m_triangleEntity = {};
-
-        shutdown();
-        return false;
-    }
-        
-    // m_scene->addEntity(m_triangleEntity);
 
     return true;
 }
 
-void FilamentRenderer::renderFrame() {
+filament::math::float3 cross(const filament::math::float3& a, const filament::math::float3& b) {
+    return {
+        a.y * b.z - a.z * b.y,
+        a.z * b.x - a.x * b.z,
+        a.x * b.y - a.y * b.x
+    };
+}
 
-    const auto now = std::chrono::steady_clock::now();
-
-    const float deltaTime =
-        std::chrono::duration<float>(now - m_lastFrame).count();
-
-    m_lastFrame = now;
-
-    if (!m_renderer || !m_swapChain || !m_triangleEntity) {
-        return;
-    }
-
-    // Rotate the triangle.
-    m_rotation += 1.0f * deltaTime;
-
-    if (m_rotation > 6.283185307f) {
-        m_rotation -= 6.283185307f;
-    }
-
-    auto& transformManager =
-        m_engine->getTransformManager();
-
-    auto instance =
-        transformManager.getInstance(m_model->getRoot());
-
-    if (!instance) {
-        return;
-    }
-
-    transformManager.setTransform(
-        instance,
-        filament::math::mat4f::rotation(
-            m_rotation,
-            filament::math::float3{1.0f, 1.0f, 0.0f}
-        )
+filament::math::float3 FilamentRenderer::getCameraPos() {
+    return m_camera->getPosition();
+}
+filament::math::float3 FilamentRenderer::getCameraTarget() {
+    return m_cameraTarget;
+}
+filament::math::float3 FilamentRenderer::getCameraUp() {
+    return m_camera->getUpVector();
+}
+filament::math::float3 FilamentRenderer::getCameraLeft() {
+    return m_camera->getLeftVector();
+}
+void FilamentRenderer::setCameraPos(filament::math::float3 pos) {
+    m_camera->lookAt(
+        pos,
+        m_cameraTarget,
+        m_camera->getUpVector()
     );
+}
+void FilamentRenderer::setCameraTarget(filament::math::float3 tar) {
+    m_cameraTarget = tar;
+    m_camera->lookAt(
+        m_camera->getPosition(),
+        m_cameraTarget,
+        m_camera->getUpVector()
+    );
+}
+void FilamentRenderer::setCameraUp(filament::math::float3 up) {
+    m_camera->lookAt(
+        m_camera->getPosition(),
+        m_cameraTarget,
+        up
+    );
+}
+
+void FilamentRenderer::renderFrame(const uint32_t x, const uint32_t y) {
+
+    if (!m_renderer || !m_swapChain) {
+        return;
+    }
+
+    // reset viewport
+    if (m_lastScreenSize.x != x || m_lastScreenSize.y != y) {
+        m_view->setViewport({
+            0,
+            0,
+            x,
+            y
+        });
+        m_lastScreenSize.x = x;
+        m_lastScreenSize.y = y;
+
+        // reset camera aspect
+        const double aspect = (double)m_lastScreenSize.x / (double)m_lastScreenSize.y;
+        const double fovY = 45.0;
+    
+        m_camera->setProjection(fovY, aspect, m_camera->getNear(), m_camera->getCullingFar());
+    }
+
 
     // Render one frame.
     if (m_renderer->beginFrame(m_swapChain)) {
@@ -537,43 +325,18 @@ void FilamentRenderer::shutdown() {
     }
 
     // models
-    if (m_model && m_scene) {
-        m_modelLoader.unload(m_model, m_scene);
-        m_model = nullptr;
+    for (auto& model : m_models) {
+        if (model && m_scene) {
+            m_modelLoader.unload(model, m_scene);
+            model = nullptr;
+        }
     }
 
     // entities
-    if (m_triangleEntity) {
-        m_scene->remove(m_triangleEntity);
-
-        m_engine->destroy(m_triangleEntity);
-        m_triangleEntity = {};
-    }
-
-    if (m_materialInstance) {
-        m_engine->destroy(m_materialInstance);
-        m_materialInstance = nullptr;
-    }
-
-    if (m_material) {
-        m_engine->destroy(m_material);
-        m_material = nullptr;
-    }
-
-    if (m_indexBuffer) {
-        m_engine->destroy(m_indexBuffer);
-        m_indexBuffer = nullptr;
-    }
-
-    if (m_vertexBuffer) {
-        m_engine->destroy(m_vertexBuffer);
-        m_vertexBuffer = nullptr;
-    }
-
-    if (m_lightEntity) {
-        m_scene->remove(m_lightEntity);
-        m_engine->destroy(m_lightEntity);
-        m_lightEntity = {};
+    if (m_dirLightEntity) {
+        m_scene->remove(m_dirLightEntity);
+        m_engine->destroy(m_dirLightEntity);
+        m_dirLightEntity = {};
     }
 
     // -----------------------------------------------------

@@ -47,7 +47,7 @@ if(EMSCRIPTEN)
     )
 
     # set(CMAKE_EXE_LINKER_FLAGS
-    #     "${CMAKE_EXE_LINKER_FLAGS} -sUSE_SDL=2 -sMAX_WEBGL_VERSION=2 -sMIN_WEBGL_VERSION=2 -sFULL_ES3=1"
+    #     "${CMAKE_EXE_LINKER_FLAGS} -sUSE_SDL=3 -sMAX_WEBGL_VERSION=2 -sMIN_WEBGL_VERSION=2 -sFULL_ES3=1"
     # )
 
     # Emscripten runtime settings
@@ -286,15 +286,36 @@ add_custom_target(MyFilamentModels ALL
     COMMENT "Copying models"
 )
 
-if(EMSCRIPTEN)
-    # Emscripten provides SDL2 through its system libraries.
-else()
-    find_package(SDL2 CONFIG REQUIRED)
-endif()
+# ---------------------------------------------------------
+# SDL3
+# ---------------------------------------------------------
+
+set(SDL_TESTS OFF CACHE BOOL
+    "Disable SDL3 tests"
+    FORCE
+)
+
+set(SDL_EXAMPLES OFF CACHE BOOL
+    "Disable SDL3 examples"
+    FORCE
+)
+
+set(SDL_TEST_LIBRARY OFF CACHE BOOL
+    "Disable SDL3 test library"
+    FORCE
+)
+
+add_subdirectory(
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/SDL
+    ${CMAKE_BINARY_DIR}/SDL
+    EXCLUDE_FROM_ALL
+)
 
 # ---------------------------------------------------------
 # Application
 # ---------------------------------------------------------
+
+file(GLOB_RECURSE CPP_SOURCES "src/*.cpp")
 
 add_executable(MyFilamentApp
 
@@ -304,17 +325,18 @@ add_executable(MyFilamentApp
     src/platform/platform.cpp
     src/renderer/filament_renderer.cpp
     src/renderer/model_loader.cpp
+    ${CPP_SOURCES}
 
 )
 
 if(EMSCRIPTEN)
 
-    target_compile_options(MyFilamentApp PRIVATE
-        -sUSE_SDL=2
-    )
+    # target_compile_options(MyFilamentApp PRIVATE
+    #     -sUSE_SDL=3
+    # )
 
     target_link_options(MyFilamentApp PRIVATE
-        -sUSE_SDL=2
+        # -sUSE_SDL=3
         -sMAX_WEBGL_VERSION=2
         -sMIN_WEBGL_VERSION=2
         -sFULL_ES3=1
@@ -344,6 +366,7 @@ target_link_libraries(MyFilamentApp
     PRIVATE
         filament
         utils
+        SDL3::SDL3
 )
 
 if(TARGET gltfio)
@@ -354,23 +377,13 @@ else()
     message(FATAL_ERROR "Filament gltfio target not found")
 endif()
 
-if(EMSCRIPTEN)
-    # target_link_options(MyFilamentApp PRIVATE
-    #     -sUSE_SDL=2
-    # )
-else()
-    target_link_libraries(MyFilamentApp PRIVATE
-        SDL2::SDL2
-    )
-endif()
-
 # ---------------------------------------------------------
-# SDL2
+# SDL3
 # ---------------------------------------------------------
 
 # target_link_libraries(MyFilamentApp
 #     PRIVATE
-#         SDL2::SDL2
+#         SDL3::SDL3
 # )
 
 # ---------------------------------------------------------
